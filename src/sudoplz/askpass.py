@@ -243,6 +243,8 @@ def check_security(config: dict[str, Any], identity: Path | None) -> bool:
             syslog.syslog(syslog.LOG_WARNING, "Sudo access denied by user")
             return False
         syslog.syslog(syslog.LOG_INFO, "Sudo access approved by user")
+    else:
+        syslog.syslog(syslog.LOG_INFO, "Sudo access auto-approved by user configuration")
 
     return True
 
@@ -374,7 +376,9 @@ def validate_script_integrity() -> bool:
     return True
 
 
-def write_audit_entry(ppid: int, proc: str | None, command: str) -> None:
+def write_audit_entry(
+    ppid: int, proc: str | None, command: str, status: str = "approved"
+) -> None:
     try:
         AUDIT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         entry = {
@@ -384,7 +388,7 @@ def write_audit_entry(ppid: int, proc: str | None, command: str) -> None:
             "command": command,
             "user": os.environ.get("USER", "unknown"),
             "cwd": os.getcwd(),
-            "status": "approved",
+            "status": status,
         }
         with AUDIT_LOG_FILE.open("a") as f:
             f.write(json.dumps(entry) + "\n")
@@ -409,7 +413,8 @@ def main() -> None:
         sys.exit(1)
 
     ppid = os.getppid()
-    write_audit_entry(ppid, process_name(ppid), parent_command(ppid))
+    status = "approved" if config["require_user_confirmation"] else "auto-approved"
+    write_audit_entry(ppid, process_name(ppid), parent_command(ppid), status)
 
     # Priority 1: age-encrypted file (Ed25519).
     if AGE_ENCRYPTED_FILE.exists() and priv and has_age() and ensure_ssh_key_loaded(priv):

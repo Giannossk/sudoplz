@@ -1,8 +1,8 @@
 # sudoplz
 
-Give Claude Code, Cursor, and other AI coding agents the ability to run `sudo` — with case-by-case GUI approval, no passwordless sudo, no `/etc/sudoers` allowlists.
+Give Claude Code, Cursor, and other AI coding agents the ability to run `sudo` — with case-by-case GUI approval by default, or explicit auto-approval for environments that already ask the user to approve each command. No passwordless sudo or `/etc/sudoers` allowlists.
 
-Your sudo password is encrypted with your SSH private key and only decrypted after you approve a dialog showing the exact command about to run. Deny the dialog and nothing happens.
+Your sudo password is encrypted with your SSH private key. By default, it is only decrypted after you approve a dialog showing the exact command about to run. An explicit auto-approve mode can instead trust the coding environment's own user-approval prompt.
 
 ![Sudo approval dialog showing a command about to run, with Deny and Allow buttons](assets/screenshot.png)
 
@@ -14,7 +14,7 @@ Coding agents can't handle interactive terminal prompts. Ask Claude Code to run 
 - **`/etc/sudoers` allowlists** require predicting every command the agent will ever need. No case-by-case review.
 - **Manual copy-paste** is tedious and breaks the agent's flow.
 
-`sudoplz` plugs into `sudo -A`, so the agent runs `sudo -A <command>`, you see a dialog with the exact command, and you click Allow or Deny. Works for any command without pre-declaring what's permitted.
+`sudoplz` plugs into `sudo -A`, so the agent runs `sudo -A <command>`. In the default mode, you see the exact command in a dialog and click Allow or Deny. In auto-approve mode, the coding environment is responsible for asking you first. Both modes work without pre-declaring commands.
 
 This threat model assumes a personal workstation with an encrypted disk and a passphrase-protected SSH key. Not appropriate for shared or production systems.
 
@@ -45,11 +45,26 @@ This threat model assumes a personal workstation with an encrypted disk and a pa
 
 ## Usage
 
-Your agent (or you) runs `sudo -A <command>`. A dialog pops up showing the command. You approve or deny.
+Your agent (or you) runs `sudo -A <command>`. In the default mode, a dialog pops up showing the command for approval.
 
 ```bash
 sudo -A apt install foo
 ```
+
+If your coding-agent environment already shows its own trusted user-approval prompt, you can explicitly opt out of sudoplz's second dialog:
+
+```bash
+sudoplz config --auto-approve
+# Read the warning, then type AUTO-APPROVE.
+```
+
+Restore case-by-case sudoplz confirmation at any time:
+
+```bash
+sudoplz config --require-confirmation
+```
+
+Auto-approve trusts the upstream environment; sudoplz cannot verify that another approval actually happened. Path and process allowlists, rate limiting, expiration, encrypted storage, integrity checks, and auditing remain active. A locked SSH key may still need its separate passphrase prompt once per session.
 
 Gotcha: `sudo -n` explicitly disallows prompting and will never trigger askpass. Always use `-A`.
 
@@ -76,7 +91,7 @@ Encryption alone doesn't cover every abuse path — anything running as your use
 
 - **Caller path whitelist.** Only decrypts when the caller's working directory is on an allowlist (home, `/tmp`, etc.). Blocks invocations from unexpected locations like `/var/tmp/malicious`.
 - **Caller process whitelist.** Parent process must be on an allowlist (sudo, your shell, your IDE, your deploy tool). Keeps arbitrary binaries from invoking askpass directly.
-- **User confirmation.** A GUI dialog asks for approval on each decryption, so any sudo elevation you didn't initiate is visible and can be denied.
+- **User confirmation.** By default, a GUI dialog asks for approval on each decryption, so any sudo elevation you didn't initiate is visible and can be denied. Auto-approve is an explicit opt-in for environments that provide their own approval layer.
 - **Rate limiting.** Configurable max-attempts-per-hour and lockout window. Contains runaway scripts and brute-force attempts.
 - **Password expiration.** Stored passwords age out automatically (default: 1 week). A stolen blob becomes useless once it expires, even with your SSH key.
 
@@ -94,7 +109,7 @@ If your SSH key has a passphrase (recommended), the askpass tool will:
 2. Prompt for the passphrase via GUI if it isn't
 3. Load the key into ssh-agent for the session
 
-You enter the passphrase once per session. After that, sudo commands only need the confirmation dialog. You need a running ssh-agent — most desktop environments start one on login; if not, `eval "$(ssh-agent -s)"` in your shell startup.
+You enter the passphrase once per session. After that, sudo commands use the configured approval mode. You need a running ssh-agent — most desktop environments start one on login; if not, `eval "$(ssh-agent -s)"` in your shell startup.
 
 This works under `sudo -A` even though sudo strips `SSH_AUTH_SOCK`: the script reconnects to your running ssh-agent.
 
@@ -108,6 +123,8 @@ sudoplz get        # Check if password exists
 sudoplz clear      # Remove password
 sudoplz test       # Test sudo integration
 sudoplz audit      # Show recent askpass usage
+sudoplz config --auto-approve          # Trust upstream approval; skip command dialog
+sudoplz config --require-confirmation  # Restore per-command GUI/TOTP approval
 ```
 
 ## Headless/SSH usage with TOTP

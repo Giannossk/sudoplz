@@ -254,6 +254,20 @@ def cmd_test(_args: argparse.Namespace) -> bool:
     return False
 
 
+def _confirm_auto_approve() -> bool:
+    print("WARNING: auto-approve disables the per-command GUI/TOTP approval prompt.")
+    print("Only enable it if another trusted layer asks you to approve each command.")
+    if not sys.stdin.isatty():
+        print("Error: --auto-approve requires an interactive terminal", file=sys.stderr)
+        return False
+
+    confirmation = input("Type AUTO-APPROVE to continue: ").strip()
+    if confirmation != "AUTO-APPROVE":
+        print("Auto-approve was not enabled.", file=sys.stderr)
+        return False
+    return True
+
+
 def cmd_config(args: argparse.Namespace) -> bool:
     config = load_config()
 
@@ -261,26 +275,43 @@ def cmd_config(args: argparse.Namespace) -> bool:
         print(json.dumps(config, indent=2))
         return True
 
-    if args.no_expire:
+    if args.auto_approve:
+        if not config["require_user_confirmation"]:
+            print("Auto-approve is already enabled.")
+            return True
+        if not _confirm_auto_approve():
+            return False
+        config["require_user_confirmation"] = False
+        message = (
+            "Auto-approve enabled. GUI/TOTP command confirmation is disabled; "
+            "all other security checks remain active."
+        )
+    elif args.require_confirmation:
+        config["require_user_confirmation"] = True
+        message = "Per-command GUI/TOTP confirmation enabled."
+    elif args.no_expire:
         new_value = 0
+        config["expiration_hours"] = new_value
+        message = "Expiration disabled. Stored password will not auto-delete."
     elif args.expire_hours is not None:
         if args.expire_hours < 0:
             print("Error: --expire-hours must be 0 or positive (0 disables)", file=sys.stderr)
             return False
         new_value = args.expire_hours
+        config["expiration_hours"] = new_value
+        message = (
+            "Expiration disabled. Stored password will not auto-delete."
+            if new_value == 0
+            else f"Expiration set to {new_value} hours."
+        )
     else:
-        print("Error: specify --show, --no-expire, or --expire-hours N", file=sys.stderr)
+        print("Error: specify a configuration option", file=sys.stderr)
         return False
 
-    config["expiration_hours"] = new_value
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n")
     CONFIG_FILE.chmod(0o600)
-
-    if new_value == 0:
-        print("Expiration disabled. Stored password will not auto-delete.")
-    else:
-        print(f"Expiration set to {new_value} hours.")
+    print(message)
     return True
 
 
@@ -298,7 +329,8 @@ def cmd_audit(_args: argparse.Namespace) -> bool:
             cmd = entry.get("command", "")
             print(
                 f"{ts} | user={entry.get('user', '?')} | "
-                f"proc={entry.get('process', '?')} | cmd={cmd[:60]}"
+                f"proc={entry.get('process', '?')} | "
+                f"status={entry.get('status', '?')} | cmd={cmd[:60]}"
             )
         except (json.JSONDecodeError, KeyError):
             continue
@@ -328,6 +360,16 @@ def main() -> None:
     config_parser = sub.add_parser("config", help="View or modify sudoplz configuration")
     config_group = config_parser.add_mutually_exclusive_group(required=True)
     config_group.add_argument("--show", action="store_true", help="Print current configuration")
+    config_group.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Skip per-command GUI/TOTP approval after an explicit warning",
+    )
+    config_group.add_argument(
+        "--require-confirmation",
+        action="store_true",
+        help="Require GUI/TOTP approval for every command (default)",
+    )
     config_group.add_argument(
         "--no-expire",
         action="store_true",
